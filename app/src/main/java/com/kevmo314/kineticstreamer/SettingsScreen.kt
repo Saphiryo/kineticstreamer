@@ -194,22 +194,47 @@ fun SettingsScreen(
                 }
             }
 
-            val rotateVideo = settings.rotateVideo180.collectAsState(initial = false)
+            val rotation = settings.videoRotation.collectAsState(initial = 0)
+            val letterbox = settings.videoLetterbox.collectAsState(initial = false)
+
+            Text(
+                "Video rotation (restart the stream to apply)",
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp)
+            )
+            listOf(
+                0 to "0° (landscape)",
+                90 to "90° (portrait, clockwise)",
+                180 to "180° (upside down)",
+                270 to "270° (portrait, counter-clockwise)"
+            ).forEach { (deg, label) ->
+                Surface(onClick = { scope.launch { settings.setVideoRotation(deg) } }) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        RadioButton(
+                            selected = rotation.value == deg,
+                            onClick = { scope.launch { settings.setVideoRotation(deg) } }
+                        )
+                        Text(label, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
 
             Surface(onClick = {
-                scope.launch { settings.setRotateVideo180(!rotateVideo.value) }
+                scope.launch { settings.setVideoLetterbox(!letterbox.value) }
             }) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Checkbox(checked = rotateVideo.value, onCheckedChange = {
-                        scope.launch { settings.setRotateVideo180(it) }
+                    Checkbox(checked = letterbox.value, onCheckedChange = {
+                        scope.launch { settings.setVideoLetterbox(it) }
                     })
                     Column(modifier = Modifier.padding(start = 8.dp)) {
-                        Text("Rotate video 180°")
+                        Text("Black bars instead of crop")
                         Text(
-                            "For upside-down camera mounting",
+                            "For 90°/270°: keep the whole picture inside the 16:9 stream",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

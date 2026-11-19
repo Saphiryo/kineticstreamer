@@ -624,7 +624,10 @@ class StreamingService : Service() {
         // The renderer runs continuously for preview
         val renderer = SurfaceTextureRenderer().also { this.renderer = it }
         renderer.addOutputSurface(previewSurface)
-        renderer.setRotate180(runBlocking { settings.rotateVideo180.first() })
+        renderer.setRotation(
+            runBlocking { settings.videoRotation.first() },
+            runBlocking { settings.videoLetterbox.first() }
+        )
 
         // Combined with deviceRefreshTrigger to allow USB reconnection
         combine(settings.selectedVideoDevice, deviceRefreshTrigger.onStart { emit(Unit) }) { identifier, _ -> identifier }

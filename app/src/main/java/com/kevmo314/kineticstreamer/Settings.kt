@@ -47,6 +47,8 @@ class Settings(private val dataStore: DataStore<Preferences>) {
     private val _selectedAudioDevice = intPreferencesKey("selected_audio_device_id")
     private val _autoOpenOnUsbCamera = booleanPreferencesKey("auto_open_on_usb_camera")
     private val _rotateVideo180 = booleanPreferencesKey("rotate_video_180")
+    private val _videoRotation = intPreferencesKey("video_rotation")
+    private val _videoLetterbox = booleanPreferencesKey("video_letterbox")
 
     val codec = dataStore.data
          .map { SupportedVideoCodec.valueOf(it[_codec] ?: SupportedVideoCodec.H264.name) }
@@ -106,6 +108,28 @@ class Settings(private val dataStore: DataStore<Preferences>) {
     val rotateVideo180 = dataStore.data.map { it[_rotateVideo180] ?: false }
 
     suspend fun setRotateVideo180(enabled: Boolean) {
-        dataStore.edit { it[_rotateVideo180] = enabled }
+        dataStore.edit {
+            it[_rotateVideo180] = enabled
+            it[_videoRotation] = if (enabled) 180 else 0
+        }
+    }
+
+    /** Clockwise rotation in degrees: 0, 90, 180 or 270. */
+    val videoRotation = dataStore.data.map {
+        it[_videoRotation] ?: if (it[_rotateVideo180] == true) 180 else 0
+    }
+
+    suspend fun setVideoRotation(degrees: Int) {
+        dataStore.edit {
+            it[_videoRotation] = degrees
+            it[_rotateVideo180] = degrees == 180
+        }
+    }
+
+    /** For 90/270: true = black bars (whole picture), false = crop to fill 16:9. */
+    val videoLetterbox = dataStore.data.map { it[_videoLetterbox] ?: false }
+
+    suspend fun setVideoLetterbox(enabled: Boolean) {
+        dataStore.edit { it[_videoLetterbox] = enabled }
     }
 }

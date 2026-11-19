@@ -35,10 +35,18 @@ class SurfaceTextureRenderer {
             attribute vec4 aPosition;
             attribute vec2 aTextureCoord;
             uniform mat4 uTextureMatrix;
+            // Output->source mapping for 90/270 rotation and crop/letterbox (identity otherwise)
+            uniform mat4 uPreMatrix;
             varying vec2 vTextureCoord;
+            varying vec2 vScreenCoord;
+            varying vec2 vPreCoord;
             void main() {
                 gl_Position = aPosition;
-                vTextureCoord = (uTextureMatrix * vec4(aTextureCoord, 0.0, 1.0)).xy;
+                vec4 pre = uPreMatrix * vec4(aTextureCoord, 0.0, 1.0);
+                vPreCoord = pre.xy;
+                vTextureCoord = (uTextureMatrix * pre).xy;
+                // Overlay positioning keeps the original (unrotated) mapping
+                vScreenCoord = (uTextureMatrix * vec4(aTextureCoord, 0.0, 1.0)).xy;
             }
         """
 
@@ -47,6 +55,8 @@ class SurfaceTextureRenderer {
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTextureCoord;
+            varying vec2 vScreenCoord;
+            varying vec2 vPreCoord;
             uniform samplerExternalOES uTexture;
             uniform samplerExternalOES uOverlayTexture;
             uniform int uHasOverlay;
@@ -63,10 +73,14 @@ class SurfaceTextureRenderer {
                     videoCoord = vec2(1.0 - vTextureCoord.x, 1.0 - vTextureCoord.y - uPaddingOffset);
                 }
                 vec4 videoColor = texture2D(uTexture, videoCoord);
+                // Letterbox: outside the rotated source -> black bars
+                if (vPreCoord.x < 0.0 || vPreCoord.x > 1.0 || vPreCoord.y < 0.0 || vPreCoord.y > 1.0) {
+                    videoColor = vec4(0.0, 0.0, 0.0, 1.0);
+                }
 
                 if (uHasOverlay == 1) {
                     // Use original texture coordinates for overlay positioning (not rotated)
-                    vec2 screenCoord = vTextureCoord;
+                    vec2 screenCoord = vScreenCoord;
 
                     // Check if current pixel is within overlay bounds
                     vec2 overlayPos = vec2(uOverlayBounds.x, uOverlayBounds.y);
@@ -137,6 +151,7 @@ class SurfaceTextureRenderer {
     private var overlayTextureMatrixHandle = 0
     private var rotate180UniformHandle = 0
     private var paddingOffsetUniformHandle = 0
+    private var preMatrixHandle = 0
 
     private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(QUAD_VERTICES.size * 4)
         .order(ByteOrder.nativeOrder())
@@ -149,6 +164,7 @@ class SurfaceTextureRenderer {
         .put(TEXTURE_COORDS)
         .also { it.position(0) }
     private val textureMatrix = FloatArray(16)
+    private val preMatrix = FloatArray(16)
     private val dims = IntArray(1) // scratch for eglQuerySurface
 
     private class Output(val surface: Surface, val eglSurface: EGLSurface)
@@ -174,6 +190,16 @@ class SurfaceTextureRenderer {
     // 180° rotation support for upside-down camera mounting
     @Volatile
     private var rotate180 = false
+
+    // 90°/270° rotation (e.g. tablet standing in portrait). Output stays at the encoder size,
+    // the rotated image is either cropped to fill it or letterboxed. Done on the GPU.
+    @Volatile
+    private var rotateQuarter = 0 // 0, 90 or 270
+    @Volatile
+    private var letterbox = false
+    // Aspect ratio of the source picture (camera frames are 16:9)
+    @Volatile
+    var sourceAspect: Float = VIDEO_WIDTH.toFloat() / VIDEO_HEIGHT.toFloat()
 
     // Added to SurfaceTexture timestamps to bring them onto CLOCK_MONOTONIC (see cameraTimestampOffsetNs)
     @Volatile
@@ -300,6 +326,7 @@ class SurfaceTextureRenderer {
         overlayTextureMatrixHandle = GLES20.glGetUniformLocation(program, "uOverlayTextureMatrix")
         rotate180UniformHandle = GLES20.glGetUniformLocation(program, "uRotate180")
         paddingOffsetUniformHandle = GLES20.glGetUniformLocation(program, "uPaddingOffset")
+        preMatrixHandle = GLES20.glGetUniformLocation(program, "uPreMatrix")
 
         Log.i(TAG, "OpenGL shaders compiled successfully")
     }
@@ -484,8 +511,42 @@ class SurfaceTextureRenderer {
      * Set 180° rotation for upside-down camera mounting
      */
     fun setRotate180(enabled: Boolean) {
-        rotate180 = enabled
-        Log.i(TAG, "180° rotation ${if (enabled) "enabled" else "disabled"}")
+        setRotation(if (enabled) 180 else 0, letterbox)
+    }
+
+    /**
+     * Rotate the video by [degrees] (0, 90, 180 or 270, clockwise). For 90/270 the output keeps
+     * the encoder's landscape size: the rotated picture is cropped to fill it, or letterboxed
+     * with black bars when [letterbox] is true.
+     */
+    fun setRotation(degrees: Int, letterbox: Boolean) {
+        val d = ((degrees % 360) + 360) % 360
+        rotate180 = d == 180
+        rotateQuarter = if (d == 90 || d == 270) d else 0
+        this.letterbox = letterbox
+        Log.i(TAG, "Rotation set to $d° (${if (letterbox) "letterbox" else "crop"})")
+    }
+
+    /** Builds [preMatrix]: output texture coords -> source texture coords. */
+    private fun updatePreMatrix(outWidth: Int, outHeight: Int) {
+        Matrix.setIdentityM(preMatrix, 0)
+        val quarter = rotateQuarter
+        if (quarter == 0 || outWidth <= 0 || outHeight <= 0) return
+        val outAspect = outWidth.toFloat() / outHeight.toFloat()
+        val rotatedAspect = 1f / sourceAspect
+        val k = outAspect / rotatedAspect
+        var sx = 1f
+        var sy = 1f
+        if (letterbox) {
+            if (k > 1f) sx = k else sy = 1f / k
+        } else {
+            if (k > 1f) sy = 1f / k else sx = k
+        }
+        // M = T(0.5) * R * S * T(-0.5)
+        Matrix.translateM(preMatrix, 0, 0.5f, 0.5f, 0f)
+        Matrix.rotateM(preMatrix, 0, if (quarter == 90) -90f else 90f, 0f, 0f, 1f)
+        Matrix.scaleM(preMatrix, 0, sx, sy, 1f)
+        Matrix.translateM(preMatrix, 0, -0.5f, -0.5f, 0f)
     }
 
     /**
@@ -603,6 +664,8 @@ class SurfaceTextureRenderer {
         GLES20.glUniform1i(textureUniformHandle, 0)
         GLES20.glUniform1i(rotate180UniformHandle, if (rotate180) 1 else 0)
         GLES20.glUniform1f(paddingOffsetUniformHandle, paddingOffset)
+        updatePreMatrix(width, height)
+        GLES20.glUniformMatrix4fv(preMatrixHandle, 1, false, preMatrix, 0)
 
         GLES20.glUniform1i(hasOverlayUniformHandle, if (hasOverlay) 1 else 0)
         if (hasOverlay) {

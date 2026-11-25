@@ -46,33 +46,44 @@ type RTSPServerSink struct {
 const rtspAuthRealm = "KineticStreamer"
 
 // checkAuth returns a 401 response when credentials are required and missing or wrong.
-func (sh *RTSPServerSink) checkAuth(req *base.Request, baseURL *base.URL) *base.Response {
+// baseURLs are alternative digest URIs accepted besides the request URL.
+func (sh *RTSPServerSink) checkAuth(req *base.Request, baseURLs ...*base.URL) *base.Response {
 	if sh.user == "" && sh.pass == "" {
 		return nil
 	}
-	if err := auth.Validate(req, sh.user, sh.pass, baseURL, nil, rtspAuthRealm, sh.nonce); err != nil {
-		return &base.Response{
-			StatusCode: base.StatusUnauthorized,
-			Header: base.Header{
-				"WWW-Authenticate": auth.GenerateWWWAuthenticate(nil, rtspAuthRealm, sh.nonce),
-			},
+	if len(baseURLs) == 0 {
+		baseURLs = []*base.URL{nil}
+	}
+	var err error
+	for _, u := range baseURLs {
+		if err = auth.Validate(req, sh.user, sh.pass, u, nil, rtspAuthRealm, sh.nonce); err == nil {
+			return nil
 		}
 	}
-	return nil
+	log.Printf("rtsp auth failed: %v", err)
+	return &base.Response{
+		StatusCode: base.StatusUnauthorized,
+		Header: base.Header{
+			"WWW-Authenticate": auth.GenerateWWWAuthenticate(nil, rtspAuthRealm, sh.nonce),
+		},
+	}
 }
 
-// setupBaseURL is the request URL without its last path element (the track control),
-// which some clients (VLC) use for the digest URI of SETUP requests.
-func setupBaseURL(req *base.Request) *base.URL {
+// setupBaseURLs are the request URL without its last path element (the track control),
+// with and without a trailing slash: VLC/live555 uses the session (Content-Base) URL as
+// the digest URI of SETUP requests.
+func setupBaseURLs(req *base.Request) []*base.URL {
 	if req.URL == nil {
 		return nil
 	}
 	u := *req.URL
+	u.RawQuery = ""
 	if i := strings.LastIndex(u.Path, "/"); i > 0 {
 		u.Path = u.Path[:i]
 	}
-	u.RawQuery = ""
-	return &u
+	withSlash := u
+	withSlash.Path += "/"
+	return []*base.URL{&u, &withSlash}
 }
 
 type rtspTrack struct {
@@ -110,7 +121,7 @@ func (sh *RTSPServerSink) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCl
 // called when receiving a DESCRIBE request.
 func (sh *RTSPServerSink) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
 	log.Printf("describe request")
-	if res := sh.checkAuth(ctx.Request, nil); res != nil {
+	if res := sh.checkAuth(ctx.Request); res != nil {
 		return res, nil, nil
 	}
 
@@ -132,7 +143,7 @@ func (sh *RTSPServerSink) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) 
 // called when receiving a SETUP request.
 func (sh *RTSPServerSink) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
 	log.Printf("setup request")
-	if res := sh.checkAuth(ctx.Request, setupBaseURL(ctx.Request)); res != nil {
+	if res := sh.checkAuth(ctx.Request, setupBaseURLs(ctx.Request)...); res != nil {
 		return res, nil, nil
 	}
 
@@ -144,7 +155,7 @@ func (sh *RTSPServerSink) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base
 // called when receiving a PLAY request.
 func (sh *RTSPServerSink) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	log.Printf("play request")
-	if res := sh.checkAuth(ctx.Request, nil); res != nil {
+	if res := sh.checkAuth(ctx.Request, setupBaseURLs(ctx.Request)...); res != nil {
 		return res, nil
 	}
 

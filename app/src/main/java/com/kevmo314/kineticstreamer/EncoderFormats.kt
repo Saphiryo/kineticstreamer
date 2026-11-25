@@ -4,10 +4,10 @@ import android.media.AudioFormat
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 
-// The output is fixed at 1080p: capture (UVC, RTMP), the preview surface and the renderer's
+// Encoded at 720p (16-aligned: 1080 lines garbles the output of some MediaTek encoders). Capture (UVC, RTMP), the preview surface and the renderer's
 // video texture are all sized for it, so there is no user-selectable resolution.
-const val VIDEO_WIDTH = 1920
-const val VIDEO_HEIGHT = 1080
+const val VIDEO_WIDTH = 1280
+const val VIDEO_HEIGHT = 720
 const val INITIAL_VIDEO_BITRATE = 2_000_000 // adjusted dynamically from the network estimate
 const val OPUS_BITRATE = 128_000
 const val AAC_BITRATE = 192_000

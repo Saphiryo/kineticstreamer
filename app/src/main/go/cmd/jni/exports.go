@@ -19,6 +19,7 @@ import (
 var (
 	srtSinks   kinetic.Handles[*srtEntry]
 	ristSinks  kinetic.Handles[*kinetic.RISTSink]
+	rtspSinks  kinetic.Handles[*kinetic.RTSPServerSink]
 	uvcSources kinetic.Handles[*kinetic.UVCSource]
 	uvcStreams kinetic.Handles[*kinetic.UVCStream]
 	whipSinks  kinetic.Handles[*whipEntry]
@@ -192,6 +193,43 @@ func GoRISTSinkWriteSample(handle int64, streamIndex int32, data unsafe.Pointer,
 //export GoRISTSinkClose
 func GoRISTSinkClose(handle int64) {
 	if sink, ok := ristSinks.Remove(handle); ok {
+		sink.Close()
+	}
+}
+
+//export GoCreateRTSPServerSink
+func GoCreateRTSPServerSink(mimeTypesStr, portStr, userStr, passStr *C.char) (handle int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in GoCreateRTSPServerSink: %v\nStack trace:\n%s", r, debug.Stack())
+			handle = 0
+		}
+	}()
+
+	sink, err := kinetic.NewRTSPServerSinkWithAuth(nil, C.GoString(mimeTypesStr), C.GoString(portStr), C.GoString(userStr), C.GoString(passStr))
+	if err != nil {
+		log.Printf("Failed to create RTSP server sink: %v", err)
+		return 0
+	}
+	return rtspSinks.Add(sink)
+}
+
+//export GoRTSPServerSinkWriteSample
+func GoRTSPServerSinkWriteSample(handle int64, streamIndex int32, data unsafe.Pointer, length int32, ptsMicroseconds int64, flags int32) {
+	defer recoverLog("GoRTSPServerSinkWriteSample")
+
+	sink, ok := rtspSinks.Get(handle)
+	if !ok {
+		return
+	}
+	if err := sink.WriteSampleWithFlags(int(streamIndex), cbytes(data, length), ptsMicroseconds, flags); err != nil {
+		log.Printf("RTSP: WriteSample: %v", err)
+	}
+}
+
+//export GoRTSPServerSinkClose
+func GoRTSPServerSinkClose(handle int64) {
+	if sink, ok := rtspSinks.Remove(handle); ok {
 		sink.Close()
 	}
 }

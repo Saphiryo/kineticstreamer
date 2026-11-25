@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import com.kevmo314.kineticstreamer.kinetic.PLICallback
 import com.kevmo314.kineticstreamer.kinetic.RISTSink
+import com.kevmo314.kineticstreamer.kinetic.RTSPServerSink
 import com.kevmo314.kineticstreamer.kinetic.SRTSink
 import com.kevmo314.kineticstreamer.kinetic.WHIPSink
 import java.io.Closeable
@@ -78,11 +79,27 @@ private class WhipOutput(private val sink: WHIPSink) : OutputSink {
     override fun close() = sink.close()
 }
 
+private class RtspOutput(private val sink: RTSPServerSink) : OutputSink {
+    override fun writeVideo(data: ByteArray, ptsUs: Long, flags: Int): Long {
+        sink.writeSample(0, data, ptsUs, flags)
+        return 0
+    }
+
+    override fun writeAudio(data: ByteArray, ptsUs: Long, flags: Int) = sink.writeSample(1, data, ptsUs, flags)
+
+    override fun close() = sink.close()
+}
+
 private fun createNativeSink(config: OutputConfiguration, mimeTypes: String, pli: PLICallback): OutputSink? {
     val url = config.url
     return when {
         url.startsWith("srt://") -> SrtOutput(SRTSink(url, mimeTypes).also { it.setPLICallback(pli) })
         url.startsWith("rist://") -> RistOutput(RISTSink(url, mimeTypes))
+        url.startsWith("rtsp://") -> {
+            val (port, _) = parseRtspUrl(url)
+            val (user, pass) = parseRtspCredentials(url)
+            RtspOutput(RTSPServerSink(mimeTypes, port, user, pass))
+        }
         config.isWhip() -> {
             // The token travels in the query string; hand it over separately
             val uri = Uri.parse(url.removePrefix("whip://"))

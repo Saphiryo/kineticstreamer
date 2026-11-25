@@ -90,10 +90,25 @@ private fun parseHostPortParam(url: String, key: String, defaultPort: String): T
     )
 }
 
-/** `rtsp://localhost:<port><path>` -> (port, path) */
+/** `rtsp://localhost:<port><path>[?user=..&pass=..]` -> (port, path) */
 internal fun parseRtspUrl(url: String): Pair<String, String> {
-    val rest = url.removePrefix("rtsp://").substringAfter(":", "")
+    val rest = url.removePrefix("rtsp://").substringAfter(":", "").substringBefore("?")
     return rest.substringBefore("/") to (if ("/" in rest) "/" + rest.substringAfter("/") else "")
+}
+
+/** `rtsp://localhost:<port><path>?user=..&pass=..` -> (user, pass); empty when absent. */
+internal fun parseRtspCredentials(url: String): Pair<String, String> {
+    val params = url.substringAfter("?", "").split("&").filter { "=" in it }.associate {
+        it.substringBefore("=") to java.net.URLDecoder.decode(it.substringAfter("="), "UTF-8")
+    }
+    return (params["user"] ?: "") to (params["pass"] ?: "")
+}
+
+internal fun buildRtspUrl(port: String, path: String, user: String, pass: String): String {
+    val base = "rtsp://localhost:$port$path"
+    if (user.isEmpty() && pass.isEmpty()) return base
+    fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
+    return "$base?user=${enc(user)}&pass=${enc(pass)}"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -330,15 +345,24 @@ fun AddRtspOutputScreen(
     val (initialPort, initialPath) = remember { initial?.let { parseRtspUrl(it.url) } ?: ("8554" to "/stream") }
     val (port, setPort) = remember { mutableStateOf(initialPort) }
     val (path, setPath) = remember { mutableStateOf(initialPath) }
+    val (initialUser, initialPass) = remember { initial?.let { parseRtspCredentials(it.url) } ?: ("" to "") }
+    val (user, setUser) = remember { mutableStateOf(initialUser) }
+    val (pass, setPass) = remember { mutableStateOf(initialPass) }
 
     OutputForm(
         title = "RTSP Server",
         isEditing = initial != null,
-        buildUrl = { "rtsp://localhost:$port$path" },
+        buildUrl = { buildRtspUrl(port, path, user, pass) },
         onSave = onSave, onDelete = onDelete, navigateBack = navigateBack,
     ) {
         OutputField(port, setPort, "Port", keyboardType = KeyboardType.Number)
         OutputField(path, setPath, "Path")
+        OutputField(user, setUser, "Username (optional)")
+        OutputField(pass, setPass, "Password (optional)", keyboardType = KeyboardType.Password, secret = true)
+        Text(
+            text = "Leave both empty for open access. Clients use rtsp://user:password@<tablet-ip>:$port$path",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

@@ -145,6 +145,35 @@ Java_com_kevmo314_kineticstreamer_kinetic_RISTSink_close(JNIEnv* env, jobject ob
     GoRISTSinkClose(handle);
 }
 
+// ---- RTSP server sink JNI bridge --------------------------------------------
+
+JNIEXPORT jlong JNICALL
+Java_com_kevmo314_kineticstreamer_kinetic_RTSPServerSink_create(JNIEnv* env, jclass clazz, jstring mimeTypes, jstring port, jstring user, jstring pass) {
+    const char* mimeTypesStr = (*env)->GetStringUTFChars(env, mimeTypes, NULL);
+    const char* portStr = (*env)->GetStringUTFChars(env, port, NULL);
+    const char* userStr = (*env)->GetStringUTFChars(env, user, NULL);
+    const char* passStr = (*env)->GetStringUTFChars(env, pass, NULL);
+    jlong handle = GoCreateRTSPServerSink((char*)mimeTypesStr, (char*)portStr, (char*)userStr, (char*)passStr);
+    (*env)->ReleaseStringUTFChars(env, mimeTypes, mimeTypesStr);
+    (*env)->ReleaseStringUTFChars(env, port, portStr);
+    (*env)->ReleaseStringUTFChars(env, user, userStr);
+    (*env)->ReleaseStringUTFChars(env, pass, passStr);
+    return handle;
+}
+
+JNIEXPORT void JNICALL
+Java_com_kevmo314_kineticstreamer_kinetic_RTSPServerSink_writeSample(JNIEnv* env, jobject obj, jlong handle, jint streamIndex, jbyteArray data, jlong pts, jint flags) {
+    jbyte* bytes = jbyteArray_to_bytes(env, data);
+    if (bytes == NULL) return;
+    GoRTSPServerSinkWriteSample(handle, streamIndex, bytes, (*env)->GetArrayLength(env, data), pts, flags);
+    release_bytes(env, data, bytes);
+}
+
+JNIEXPORT void JNICALL
+Java_com_kevmo314_kineticstreamer_kinetic_RTSPServerSink_close(JNIEnv* env, jobject obj, jlong handle) {
+    GoRTSPServerSinkClose(handle);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_kevmo314_kineticstreamer_kinetic_UVCSource_create(JNIEnv* env, jclass clazz, jint fd) {
     return GoCreateUVCSource(fd);

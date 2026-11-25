@@ -14,6 +14,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/auth"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
@@ -36,6 +37,42 @@ type RTSPServerSink struct {
 	mu     sync.Mutex
 	tracks []*rtspTrack
 	pts0   int64
+
+	// Optional RTSP authentication (Basic or Digest). Disabled when both are empty.
+	user, pass string
+	nonce      string
+}
+
+const rtspAuthRealm = "KineticStreamer"
+
+// checkAuth returns a 401 response when credentials are required and missing or wrong.
+func (sh *RTSPServerSink) checkAuth(req *base.Request, baseURL *base.URL) *base.Response {
+	if sh.user == "" && sh.pass == "" {
+		return nil
+	}
+	if err := auth.Validate(req, sh.user, sh.pass, baseURL, nil, rtspAuthRealm, sh.nonce); err != nil {
+		return &base.Response{
+			StatusCode: base.StatusUnauthorized,
+			Header: base.Header{
+				"WWW-Authenticate": auth.GenerateWWWAuthenticate(nil, rtspAuthRealm, sh.nonce),
+			},
+		}
+	}
+	return nil
+}
+
+// setupBaseURL is the request URL without its last path element (the track control),
+// which some clients (VLC) use for the digest URI of SETUP requests.
+func setupBaseURL(req *base.Request) *base.URL {
+	if req.URL == nil {
+		return nil
+	}
+	u := *req.URL
+	if i := strings.LastIndex(u.Path, "/"); i > 0 {
+		u.Path = u.Path[:i]
+	}
+	u.RawQuery = ""
+	return &u
 }
 
 type rtspTrack struct {
@@ -43,6 +80,11 @@ type rtspTrack struct {
 
 	mtu, seq  uint16
 	payloader rtp.Payloader
+
+	// H.264/H.265 parameter sets (MediaCodec codec-config buffer), resent with every
+	// keyframe so clients joining mid-stream can decode.
+	isH26x      bool
+	codecConfig []byte
 }
 
 // called when a connection is opened.
@@ -68,6 +110,9 @@ func (sh *RTSPServerSink) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCl
 // called when receiving a DESCRIBE request.
 func (sh *RTSPServerSink) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
 	log.Printf("describe request")
+	if res := sh.checkAuth(ctx.Request, nil); res != nil {
+		return res, nil, nil
+	}
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
@@ -87,6 +132,9 @@ func (sh *RTSPServerSink) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) 
 // called when receiving a SETUP request.
 func (sh *RTSPServerSink) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
 	log.Printf("setup request")
+	if res := sh.checkAuth(ctx.Request, setupBaseURL(ctx.Request)); res != nil {
+		return res, nil, nil
+	}
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
@@ -95,7 +143,10 @@ func (sh *RTSPServerSink) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base
 
 // called when receiving a PLAY request.
 func (sh *RTSPServerSink) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	log.Printf("play request %#v", ctx)
+	log.Printf("play request")
+	if res := sh.checkAuth(ctx.Request, nil); res != nil {
+		return res, nil
+	}
 
 	// parse the range header
 	rangeHeader := ctx.Request.Header["Range"]
@@ -124,7 +175,7 @@ func (sh *RTSPServerSink) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.R
 		// TODO: implement
 		return &base.Response{StatusCode: base.StatusOK}, nil
 	}
-	if dpts == 0 {
+	if dpts == 0 || sh.disk == nil {
 		// exit if the range header indicates that we should play live.
 		sh.recordedPlaybackRequestId.Store(0)
 		return &base.Response{
@@ -277,13 +328,33 @@ func NewRTSPServerSink(disk *BinaryDumpSink, encodedMediaFormatMimeTypes string)
 	return newRTSPServerSink(disk, encodedMediaFormatMimeTypes, ":8554", ":8000", ":8001")
 }
 
+// NewRTSPServerSinkWithAuth starts an RTSP server on [port] (e.g. "8554"). When user or pass
+// is non-empty, clients must authenticate (Basic or Digest). disk may be nil (no seeking).
+func NewRTSPServerSinkWithAuth(disk *BinaryDumpSink, encodedMediaFormatMimeTypes, port, user, pass string) (*RTSPServerSink, error) {
+	if port == "" {
+		port = "8554"
+	}
+	return newRTSPServerSinkAuth(disk, encodedMediaFormatMimeTypes, ":"+port, ":8000", ":8001", user, pass)
+}
+
 func newRTSPServerSink(disk *BinaryDumpSink, encodedMediaFormatMimeTypes, rtspAddress, udpRTPAddress, udpRTCPAddress string) (_ *RTSPServerSink, err error) {
+	return newRTSPServerSinkAuth(disk, encodedMediaFormatMimeTypes, rtspAddress, udpRTPAddress, udpRTCPAddress, "", "")
+}
+
+func newRTSPServerSinkAuth(disk *BinaryDumpSink, encodedMediaFormatMimeTypes, rtspAddress, udpRTPAddress, udpRTCPAddress, user, pass string) (_ *RTSPServerSink, err error) {
 	log.Printf("encodedMediaFormatMimeTypes: %s", encodedMediaFormatMimeTypes)
 	mediaFormatMimeTypes := strings.Split(encodedMediaFormatMimeTypes, ";")
+	nonce, err := auth.GenerateNonce()
+	if err != nil {
+		return nil, err
+	}
 	s := &RTSPServerSink{
 		disk:   disk,
 		done:   make(chan struct{}),
 		tracks: make([]*rtspTrack, len(mediaFormatMimeTypes)),
+		user:   user,
+		pass:   pass,
+		nonce:  nonce,
 	}
 	s.s = &gortsplib.Server{
 		Handler:           s,
@@ -315,10 +386,12 @@ func newRTSPServerSink(disk *BinaryDumpSink, encodedMediaFormatMimeTypes, rtspAd
 		if media == nil || payloader == nil {
 			return nil, fmt.Errorf("invalid media format mime type: %s", mediaFormatMimeType)
 		}
+		pionMime := MediaFormatMimeType(mediaFormatMimeType).PionMimeType()
 		s.tracks[i] = &rtspTrack{
 			media:     media,
 			payloader: payloader,
 			mtu:       uint16(s.s.MaxPacketSize),
+			isH26x:    pionMime == webrtc.MimeTypeH264 || pionMime == webrtc.MimeTypeH265,
 		}
 		medias[i] = media
 		log.Printf("media %d: %+v", i, media)
@@ -356,6 +429,40 @@ func (s *RTSPServerSink) writePacket(i int, buf []byte, ptsMicroseconds int64) e
 		t.seq++
 	}
 	return nil
+}
+
+// MediaCodec buffer flags
+const (
+	mediaCodecFlagKeyFrame    = 1
+	mediaCodecFlagCodecConfig = 2
+)
+
+// WriteSampleWithFlags is WriteSample with MediaCodec buffer flags: codec-config buffers are
+// kept and prepended to every keyframe instead of being sent once.
+func (s *RTSPServerSink) WriteSampleWithFlags(i int, buf []byte, ptsMicroseconds int64, mediaCodecFlags int32) error {
+	if i < 0 || i >= len(s.tracks) {
+		return fmt.Errorf("track index out of range: %d", i)
+	}
+	t := s.tracks[i]
+	if t.isH26x {
+		if mediaCodecFlags&mediaCodecFlagCodecConfig != 0 {
+			s.mu.Lock()
+			t.codecConfig = append([]byte(nil), buf...)
+			s.mu.Unlock()
+			return nil
+		}
+		if mediaCodecFlags&mediaCodecFlagKeyFrame != 0 {
+			s.mu.Lock()
+			cfg := t.codecConfig
+			s.mu.Unlock()
+			if len(cfg) > 0 {
+				joined := make([]byte, 0, len(cfg)+len(buf))
+				joined = append(joined, cfg...)
+				buf = append(joined, buf...)
+			}
+		}
+	}
+	return s.WriteSample(i, buf, ptsMicroseconds)
 }
 
 func (s *RTSPServerSink) WriteSample(i int, buf []byte, ptsMicroseconds int64) error {

@@ -455,6 +455,7 @@ fun VideoSource(context: Context,
 
     try {
         renderer.timestampOffsetNanos = 0
+        renderer.sourceAspect = 16f / 9f
         when (device) {
             is VideoSourceDevice.UsbCamera -> {
                 Log.i("VideoSource", "Opening USB camera: ${device.usbDevice.productName}")
@@ -469,6 +470,13 @@ fun VideoSource(context: Context,
                     System.nanoTime(),
                     SystemClock.elapsedRealtimeNanos(),
                 )
+                // Use a size the camera really supports: an unsupported buffer size makes the HAL
+                // pick another one (often 4:3), which then shows up stretched.
+                chooseCameraSize(characteristics)?.let { size ->
+                    Log.i("VideoSource", "Camera capture size: ${size.width}x${size.height}")
+                    outputSurfaceTexture.setDefaultBufferSize(size.width, size.height)
+                    renderer.sourceAspect = size.width.toFloat() / size.height.toFloat()
+                }
                 val handlerThread = HandlerThread("CameraSource").apply { start() }
                 register { handlerThread.quitSafely() }
                 val result = openCamera(cameraManager, outputSurface, Handler(handlerThread.looper), device.cameraId)
@@ -535,4 +543,15 @@ fun VideoSource(context: Context,
     trySend(outputSurfaceTexture)
 
     awaitClose { closeAll() }
+}
+
+/** Exactly 1920x1080 if supported, else the largest 16:9 size up to 1920 wide, else the largest size up to 1920 wide. */
+internal fun chooseCameraSize(characteristics: CameraCharacteristics): android.util.Size? {
+    val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return null
+    val sizes = map.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.toList().orEmpty()
+        .filter { it.width <= 1920 && it.height <= 1920 }
+    if (sizes.isEmpty()) return null
+    sizes.firstOrNull { it.width == 1920 && it.height == 1080 }?.let { return it }
+    val wide = sizes.filter { kotlin.math.abs(it.width * 9 - it.height * 16) <= it.height / 10 }
+    return (wide.ifEmpty { sizes }).maxByOrNull { it.width.toLong() * it.height }
 }

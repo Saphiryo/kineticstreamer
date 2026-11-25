@@ -531,10 +531,12 @@ class SurfaceTextureRenderer {
     private fun updatePreMatrix(outWidth: Int, outHeight: Int) {
         Matrix.setIdentityM(preMatrix, 0)
         val quarter = rotateQuarter
-        if (quarter == 0 || outWidth <= 0 || outHeight <= 0) return
+        if (outWidth <= 0 || outHeight <= 0) return
         val outAspect = outWidth.toFloat() / outHeight.toFloat()
-        val rotatedAspect = 1f / sourceAspect
+        val rotatedAspect = if (quarter == 0) sourceAspect else 1f / sourceAspect
         val k = outAspect / rotatedAspect
+        // Same shape and no quarter turn: nothing to do
+        if (quarter == 0 && kotlin.math.abs(k - 1f) < 0.01f) return
         var sx = 1f
         var sy = 1f
         if (letterbox) {
@@ -544,7 +546,7 @@ class SurfaceTextureRenderer {
         }
         // M = T(0.5) * R * S * T(-0.5)
         Matrix.translateM(preMatrix, 0, 0.5f, 0.5f, 0f)
-        Matrix.rotateM(preMatrix, 0, if (quarter == 90) -90f else 90f, 0f, 0f, 1f)
+        if (quarter != 0) Matrix.rotateM(preMatrix, 0, if (quarter == 90) -90f else 90f, 0f, 0f, 1f)
         Matrix.scaleM(preMatrix, 0, sx, sy, 1f)
         Matrix.translateM(preMatrix, 0, -0.5f, -0.5f, 0f)
     }

@@ -196,6 +196,23 @@ fun SettingsScreen(
 
             val rotation = settings.videoRotation.collectAsState(initial = 0)
             val letterbox = settings.videoLetterbox.collectAsState(initial = false)
+            val fps = settings.videoFps.collectAsState(initial = 30)
+
+            Text(
+                "Frame rate (restart the stream to apply)",
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp)
+            )
+            Row(modifier = Modifier.fillMaxWidth().padding(start = 8.dp)) {
+                listOf(5, 10, 15, 30).forEach { value ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = fps.value == value,
+                            onClick = { scope.launch { settings.setVideoFps(value) } }
+                        )
+                        Text("$value fps", modifier = Modifier.padding(end = 8.dp))
+                    }
+                }
+            }
 
             Text(
                 "Video rotation (restart the stream to apply)",

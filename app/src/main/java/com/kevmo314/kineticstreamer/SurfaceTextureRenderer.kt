@@ -167,7 +167,7 @@ class SurfaceTextureRenderer {
     private val preMatrix = FloatArray(16)
     private val dims = IntArray(1) // scratch for eglQuerySurface
 
-    private class Output(val surface: Surface, val eglSurface: EGLSurface)
+    private class Output(val surface: Surface, val eglSurface: EGLSurface, val isEncoder: Boolean = false)
 
     // Encoder outputs are kept at the front so they are drawn and swapped before the preview.
     private val outputs = ArrayList<Output>()
@@ -186,6 +186,11 @@ class SurfaceTextureRenderer {
 
     @Volatile
     private var overlayFrameAvailable = false
+
+    /** Frames per second sent to the encoder (the preview keeps the source rate). */
+    @Volatile
+    var encoderFps: Int = 30
+    private var lastEncodedNanos = Long.MIN_VALUE
 
     // 180° rotation support for upside-down camera mounting
     @Volatile
@@ -397,7 +402,7 @@ class SurfaceTextureRenderer {
             }
             makeIdleCurrent()
 
-            outputs.add(if (encoder) 0 else outputs.size, Output(surface, eglSurface))
+            outputs.add(if (encoder) 0 else outputs.size, Output(surface, eglSurface, encoder))
             Log.i(TAG, "Added output surface, total: ${outputs.size}")
         }
     }
@@ -624,9 +629,20 @@ class SurfaceTextureRenderer {
         // clock); bring them onto CLOCK_MONOTONIC like the audio.
         val presentationTimeNanos = surfaceTexture.timestamp + timestampOffsetNanos
 
+        // Thin out encoder frames to encoderFps (10% slack for source timestamp jitter)
+        val fps = encoderFps
+        val encodeThisFrame = fps <= 0 || lastEncodedNanos == Long.MIN_VALUE ||
+            presentationTimeNanos - lastEncodedNanos >= 900_000_000L / fps ||
+            presentationTimeNanos < lastEncodedNanos
+        if (encodeThisFrame && outputs.any { it.isEncoder }) lastEncodedNanos = presentationTimeNanos
+
         // Front to back (encoder first); failed outputs are dropped in place
         var i = 0
         while (i < outputs.size) {
+            if (outputs[i].isEncoder && !encodeThisFrame) {
+                i++
+                continue
+            }
             if (renderToSurface(outputs[i].eglSurface, presentationTimeNanos)) {
                 i++
             } else {

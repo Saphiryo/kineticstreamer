@@ -351,7 +351,7 @@ class StreamingService : Service() {
         val videoCodec = runBlocking { settings.codec.first() }
         Log.i(TAG, "Outputs: $outputConfigs, audio=${if (useOpus) "Opus" else "AAC"}, video=${videoCodec.mimeType}")
 
-        val videoFormat = videoEncoderFormat(videoCodec.mimeType)
+        val videoFormat = videoEncoderFormat(videoCodec.mimeType, runBlocking { settings.videoFps.first() })
         val audioFormat = audioEncoderFormat(useOpus)
         val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         val videoEncoderName = codecList.findEncoderForFormat(videoFormat)
@@ -624,6 +624,7 @@ class StreamingService : Service() {
         // The renderer runs continuously for preview
         val renderer = SurfaceTextureRenderer().also { this.renderer = it }
         renderer.addOutputSurface(previewSurface)
+        renderer.encoderFps = runBlocking { settings.videoFps.first() }
         renderer.setRotation(
             runBlocking { settings.videoRotation.first() },
             runBlocking { settings.videoLetterbox.first() }

@@ -49,6 +49,7 @@ class Settings(private val dataStore: DataStore<Preferences>) {
     private val _rotateVideo180 = booleanPreferencesKey("rotate_video_180")
     private val _videoRotation = intPreferencesKey("video_rotation")
     private val _videoLetterbox = booleanPreferencesKey("video_letterbox")
+    private val _videoFps = intPreferencesKey("video_fps")
 
     val codec = dataStore.data
          .map { SupportedVideoCodec.valueOf(it[_codec] ?: SupportedVideoCodec.H264.name) }
@@ -131,5 +132,12 @@ class Settings(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setVideoLetterbox(enabled: Boolean) {
         dataStore.edit { it[_videoLetterbox] = enabled }
+    }
+
+    /** Frames per second of the encoded stream (5, 10, 15 or 30). */
+    val videoFps = dataStore.data.map { it[_videoFps] ?: 30 }
+
+    suspend fun setVideoFps(fps: Int) {
+        dataStore.edit { it[_videoFps] = fps }
     }
 }

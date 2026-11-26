@@ -13,14 +13,14 @@ const val OPUS_BITRATE = 128_000
 const val AAC_BITRATE = 192_000
 
 /** 1080p30 low-latency CBR, with headroom for bitrate adaptation up to 7.5 Mbps. */
-fun videoEncoderFormat(mimeType: String): MediaFormat =
+fun videoEncoderFormat(mimeType: String, fps: Int = 30): MediaFormat =
     MediaFormat.createVideoFormat(mimeType, VIDEO_WIDTH, VIDEO_HEIGHT).apply {
         setInteger(MediaFormat.KEY_BIT_RATE, INITIAL_VIDEO_BITRATE)
         // Input comes from a Surface (GL): without this, some encoders (MediaTek) read the RGBA
         // surface as YUV and output green/purple stripes.
         setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-        setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-        setInteger(MediaFormat.KEY_CAPTURE_RATE, 30)
+        setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+        setInteger(MediaFormat.KEY_CAPTURE_RATE, fps)
         setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 5)
         // CBR with frame drop for strict constant bitrate
         setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR_FD)

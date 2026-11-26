@@ -34,10 +34,10 @@ type Expectations struct {
 	MinPairs       int     // minimum number of paired flash/tone events
 }
 
-// DefaultExpectations matches the app's fixed 1080p30 H.264 + 48 kHz stereo AAC output.
+// DefaultExpectations matches the app's default 720p30 H.264 + 48 kHz stereo AAC output.
 func DefaultExpectations() Expectations {
 	return Expectations{
-		Width: 1920, Height: 1080, MinFPS: 27, MaxFPS: 33,
+		Width: 1280, Height: 720, MinFPS: 27, MaxFPS: 33,
 		SampleRate: 48000, Channels: 2,
 		MinDuration: 8, MaxPTSGap: 0.5, MaxKeyFrames: 180, // the app asks for a keyframe every 150 frames
 

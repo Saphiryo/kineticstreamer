@@ -16,6 +16,9 @@ const val AAC_BITRATE = 192_000
 fun videoEncoderFormat(mimeType: String): MediaFormat =
     MediaFormat.createVideoFormat(mimeType, VIDEO_WIDTH, VIDEO_HEIGHT).apply {
         setInteger(MediaFormat.KEY_BIT_RATE, INITIAL_VIDEO_BITRATE)
+        // Input comes from a Surface (GL): without this, some encoders (MediaTek) read the RGBA
+        // surface as YUV and output green/purple stripes.
+        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
         setInteger(MediaFormat.KEY_FRAME_RATE, 30)
         setInteger(MediaFormat.KEY_CAPTURE_RATE, 30)
         setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 5)

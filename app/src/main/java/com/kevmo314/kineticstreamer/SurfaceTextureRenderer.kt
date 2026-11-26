@@ -533,7 +533,11 @@ class SurfaceTextureRenderer {
         val quarter = rotateQuarter
         if (outWidth <= 0 || outHeight <= 0) return
         val outAspect = outWidth.toFloat() / outHeight.toFloat()
-        val rotatedAspect = if (quarter == 0) sourceAspect else 1f / sourceAspect
+        // Some camera HALs put the sensor rotation in the SurfaceTexture transform: the picture
+        // the shader sees is then already a quarter turn from the buffer, with inverted aspect.
+        val swapped = kotlin.math.abs(textureMatrix[0]) < kotlin.math.abs(textureMatrix[1])
+        val logicalAspect = if (swapped) 1f / sourceAspect else sourceAspect
+        val rotatedAspect = if (quarter == 0) logicalAspect else 1f / logicalAspect
         val k = outAspect / rotatedAspect
         // Same shape and no quarter turn: nothing to do
         if (quarter == 0 && kotlin.math.abs(k - 1f) < 0.01f) return
